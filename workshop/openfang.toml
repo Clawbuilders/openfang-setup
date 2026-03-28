@@ -1,0 +1,23 @@
+# OpenFang Configuration — NVIDIA NIM
+# This file is mounted into the container as /data/config.toml
+
+[default_model]
+provider    = "openai"
+model       = "nvidia/llama-3.1-nemotron-ultra-253b-v1"
+api_key_env = "NVIDIA_API_KEY"
+base_url    = "https://integrate.api.nvidia.com/v1"
+
+# ─── Alternative NVIDIA NIM models (swap the model field above) ───────────────
+# "nvidia/llama-3.3-nemotron-super-49b-v1"   — fast + strong reasoning
+# "meta/llama-3.3-70b-instruct"              — fast, general-purpose
+# "meta/llama-4-maverick-17b-128e-instruct"  — multimodal, 128k context
+# "meta/llama-4-scout-17b-16e-instruct"      — efficient MoE
+# "deepseek-ai/deepseek-r1"                  — deep reasoning
+# "mistralai/mistral-large-2-instruct"       — Mistral via NIM
+# "qwen/qwq-32b"                             — Qwen reasoning
+
+[memory]
+decay_rate = 0.05
+
+[network]
+listen_addr = "0.0.0.0:4200"

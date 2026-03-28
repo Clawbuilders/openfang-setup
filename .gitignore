@@ -1,0 +1,7 @@
+# Never commit real API keys
+workshop/.env
+.env
+
+# Keep the example file
+!.env.example
+!workshop/.env.example

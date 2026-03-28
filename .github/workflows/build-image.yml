@@ -1,0 +1,160 @@
+name: Build & Push OpenFang Image
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version tag (e.g. v0.3.30)"
+        required: false
+        default: "latest"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+
+    steps:
+      - name: Checkout openfang-setup repo
+        uses: actions/checkout@v4
+
+      - name: Checkout OpenFang source
+        uses: actions/checkout@v4
+        with:
+          repository: RightNow-AI/openfang
+          path: openfang-src
+
+      - name: Set version tag
+        id: version
+        run: |
+          VERSION="${{ github.event.inputs.version || 'latest' }}"
+          echo "tag=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Free up disk space
+        run: |
+          sudo rm -rf \
+            /usr/share/dotnet \
+            /usr/local/lib/android \
+            /opt/ghc \
+            /opt/hostedtoolcache/CodeQL \
+            /usr/local/share/boost \
+            "$AGENT_TOOLSDIRECTORY"
+          sudo docker image prune -af
+          df -h
+
+      - name: Add swap space
+        run: |
+          sudo dd if=/dev/zero of=/mnt/swap bs=1M count=8192
+          sudo chmod 600 /mnt/swap
+          sudo mkswap /mnt/swap
+          sudo swapon /mnt/swap
+          free -h
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            openfang-src/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('openfang-src/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Install system dependencies
+        run: sudo apt-get install -y pkg-config libssl-dev
+
+      - name: Build OpenFang binary natively
+        working-directory: openfang-src
+        env:
+          CARGO_PROFILE_RELEASE_LTO: "false"
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "1"
+        run: cargo build --release --bin openfang
+
+      - name: Package into Docker image
+        run: |
+          cp openfang-src/target/release/openfang .
+          cp -r openfang-src/agents .
+          docker build -f Dockerfile.prebuilt \
+            -t ghcr.io/clawbuilders/openfang:latest \
+            -t ghcr.io/clawbuilders/openfang:${{ steps.version.outputs.tag }} \
+            .
+
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Push to GHCR
+        run: |
+          docker push ghcr.io/clawbuilders/openfang:latest
+          docker push ghcr.io/clawbuilders/openfang:${{ steps.version.outputs.tag }}
+
+      - name: Export image as tar.gz
+        run: |
+          docker save ghcr.io/clawbuilders/openfang:latest | gzip > openfang-image.tar.gz
+          echo "Image size: $(du -sh openfang-image.tar.gz | cut -f1)"
+
+      - name: Get OpenFang version info
+        id: openfang_info
+        run: |
+          cd openfang-src
+          VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          echo "openfang_version=$VERSION" >> $GITHUB_OUTPUT
+          COMMIT=$(git rev-parse --short HEAD)
+          echo "commit=$COMMIT" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: "OpenFang ${{ steps.version.outputs.tag }}"
+          body: |
+            ## OpenFang Workshop Image — ${{ steps.version.outputs.tag }}
+
+            Pre-built Docker image for the OpenFang setup workshop.
+
+            ### What's included
+            - OpenFang v${{ steps.openfang_info.outputs.openfang_version }} (commit `${{ steps.openfang_info.outputs.commit }}`)
+            - Configured for NVIDIA NIM (`nvidia/llama-3.1-nemotron-ultra-253b-v1`)
+            - Dashboard at `http://localhost:4200`
+            - 7 autonomous Hands included
+
+            ### Quick Start
+
+            **Option A — Pull from GHCR (recommended):**
+            ```bash
+            docker pull ghcr.io/clawbuilders/openfang:latest
+            ```
+
+            **Option B — Load from file:**
+            ```bash
+            # Download openfang-image.tar.gz from assets below, then:
+            docker load < openfang-image.tar.gz
+            ```
+
+            **Run it:**
+            ```bash
+            docker run -d \
+              --name openfang \
+              -p 4200:4200 \
+              -v ./openfang.toml:/data/config.toml:ro \
+              --env-file .env \
+              ghcr.io/clawbuilders/openfang:latest
+            ```
+
+            ### Requirements
+            - Docker Desktop or Docker Engine
+            - NVIDIA API key from https://build.nvidia.com
+
+            ### Full setup guide
+            See [README](https://github.com/Clawbuilders/openfang-setup#readme)
+
+            ---
+            Built natively on GitHub Actions (ubuntu-latest), packaged into debian:bookworm-slim.
+            Source: https://github.com/RightNow-AI/openfang
+          files: openfang-image.tar.gz
+          draft: false
+          prerelease: false
