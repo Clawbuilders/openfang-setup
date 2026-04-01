@@ -10,7 +10,16 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            platform: linux/amd64
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            platform: linux/arm64
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
     permissions:
       contents: write
       packages: write
@@ -39,7 +48,7 @@ jobs:
             /opt/ghc \
             /opt/hostedtoolcache/CodeQL \
             /usr/local/share/boost \
-            "$AGENT_TOOLSDIRECTORY"
+            "$AGENT_TOOLSDIRECTORY" || true
           sudo docker image prune -af
           df -h
 
@@ -61,9 +70,9 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             openfang-src/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('openfang-src/Cargo.lock') }}
+          key: ${{ runner.os }}-${{ matrix.arch }}-cargo-${{ hashFiles('openfang-src/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-
+            ${{ runner.os }}-${{ matrix.arch }}-cargo-
 
       - name: Install system dependencies
         run: sudo apt-get install -y pkg-config libssl-dev
@@ -75,27 +84,31 @@ jobs:
           CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "1"
         run: cargo build --release --bin openfang
 
-      - name: Package into Docker image
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Package and push platform image
         run: |
           cp openfang-src/target/release/openfang .
           cp -r openfang-src/agents .
           docker build -f Dockerfile.prebuilt \
-            -t ghcr.io/clawbuilders/openfang:latest \
-            -t ghcr.io/clawbuilders/openfang:${{ steps.version.outputs.tag }} \
+            --platform ${{ matrix.platform }} \
+            -t ghcr.io/clawbuilders/openfang:${{ steps.version.outputs.tag }}-${{ matrix.arch }} \
             .
+          docker push ghcr.io/clawbuilders/openfang:${{ steps.version.outputs.tag }}-${{ matrix.arch }}
 
-      - name: Log in to GHCR
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-
-      - name: Push to GHCR
+      - name: Export platform image as tar.gz
         run: |
-          docker push ghcr.io/clawbuilders/openfang:latest
-          docker push ghcr.io/clawbuilders/openfang:${{ steps.version.outputs.tag }}
+          docker save ghcr.io/clawbuilders/openfang:${{ steps.version.outputs.tag }}-${{ matrix.arch }} \
+            | gzip > openfang-image-${{ matrix.arch }}.tar.gz
+          echo "Image size: $(du -sh openfang-image-${{ matrix.arch }}.tar.gz | cut -f1)"
 
-      - name: Export image as tar.gz
-        run: |
-          docker save ghcr.io/clawbuilders/openfang:latest | gzip > openfang-image.tar.gz
-          echo "Image size: $(du -sh openfang-image.tar.gz | cut -f1)"
+      - name: Upload platform image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: openfang-image-${{ matrix.arch }}
+          path: openfang-image-${{ matrix.arch }}.tar.gz
+          retention-days: 1
 
       - name: Get OpenFang version info
         id: openfang_info
@@ -106,33 +119,68 @@ jobs:
           COMMIT=$(git rev-parse --short HEAD)
           echo "commit=$COMMIT" >> $GITHUB_OUTPUT
 
+    outputs:
+      openfang_version: ${{ steps.openfang_info.outputs.openfang_version }}
+      openfang_commit: ${{ steps.openfang_info.outputs.commit }}
+      version_tag: ${{ steps.version.outputs.tag }}
+
+  manifest:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+
+    steps:
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Create and push multi-arch manifest
+        run: |
+          TAG="${{ needs.build.outputs.version_tag }}"
+          docker buildx imagetools create \
+            -t ghcr.io/clawbuilders/openfang:${TAG} \
+            -t ghcr.io/clawbuilders/openfang:latest \
+            ghcr.io/clawbuilders/openfang:${TAG}-amd64 \
+            ghcr.io/clawbuilders/openfang:${TAG}-arm64
+
+      - name: Download platform image artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: openfang-image-*
+          merge-multiple: true
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.version.outputs.tag }}
-          name: "OpenFang ${{ steps.version.outputs.tag }}"
+          tag_name: ${{ needs.build.outputs.version_tag }}
+          name: "OpenFang ${{ needs.build.outputs.version_tag }}"
           body: |
-            ## OpenFang Workshop Image — ${{ steps.version.outputs.tag }}
+            ## OpenFang Workshop Image — ${{ needs.build.outputs.version_tag }}
 
             Pre-built Docker image for the OpenFang setup workshop.
 
             ### What's included
-            - OpenFang v${{ steps.openfang_info.outputs.openfang_version }} (commit `${{ steps.openfang_info.outputs.commit }}`)
+            - OpenFang v${{ needs.build.outputs.openfang_version }} (commit `${{ needs.build.outputs.openfang_commit }}`)
             - Configured for NVIDIA NIM (`nvidia/llama-3.1-nemotron-ultra-253b-v1`)
             - Dashboard at `http://localhost:4200`
             - 7 autonomous Hands included
+            - **Multi-arch**: `linux/amd64` + `linux/arm64` (Apple Silicon)
 
             ### Quick Start
 
-            **Option A — Pull from GHCR (recommended):**
+            **Option A — Pull from GHCR (recommended, auto-selects your arch):**
             ```bash
             docker pull ghcr.io/clawbuilders/openfang:latest
             ```
 
-            **Option B — Load from file:**
+            **Option B — Load from file (pick your arch):**
             ```bash
-            # Download openfang-image.tar.gz from assets below, then:
-            docker load < openfang-image.tar.gz
+            # Apple Silicon (M1/M2/M3/M4):
+            docker load < openfang-image-arm64.tar.gz
+
+            # Intel/AMD:
+            docker load < openfang-image-amd64.tar.gz
             ```
 
             **Run it:**
@@ -140,8 +188,8 @@ jobs:
             docker run -d \
               --name openfang \
               -p 4200:4200 \
-              -v ./openfang.toml:/data/config.toml:ro \
-              --env-file .env \
+              -v ./workshop/openfang.toml:/data/config.toml:ro \
+              --env-file ./workshop/.env \
               ghcr.io/clawbuilders/openfang:latest
             ```
 
@@ -153,8 +201,10 @@ jobs:
             See [README](https://github.com/Clawbuilders/openfang-setup#readme)
 
             ---
-            Built natively on GitHub Actions (ubuntu-latest), packaged into debian:bookworm-slim.
+            Built natively on GitHub Actions (ubuntu-latest + ubuntu-24.04-arm), packaged into debian:bookworm-slim.
             Source: https://github.com/RightNow-AI/openfang
-          files: openfang-image.tar.gz
+          files: |
+            openfang-image-amd64.tar.gz
+            openfang-image-arm64.tar.gz
           draft: false
           prerelease: false
