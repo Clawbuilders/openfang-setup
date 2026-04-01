@@ -16,8 +16,7 @@ base_url    = "https://integrate.api.nvidia.com/v1"
 # "mistralai/mistral-large-2-instruct"       — Mistral via NIM
 # "qwen/qwq-32b"                             — Qwen reasoning
 
+api_listen = "0.0.0.0:4200"
+
 [memory]
 decay_rate = 0.05
-
-[network]
-listen_addr = "0.0.0.0:4200"
