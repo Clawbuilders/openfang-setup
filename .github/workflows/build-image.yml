@@ -31,7 +31,7 @@ jobs:
       - name: Checkout OpenFang source
         uses: actions/checkout@v4
         with:
-          repository: RightNow-AI/openfang
+          repository: Clawbuilders/openfang
           path: openfang-src
 
       - name: Set version tag
@@ -202,7 +202,7 @@ jobs:
 
             ---
             Built natively on GitHub Actions (ubuntu-latest + ubuntu-24.04-arm), packaged into debian:bookworm-slim.
-            Source: https://github.com/RightNow-AI/openfang
+            Source: https://github.com/Clawbuilders/openfang
           files: |
             openfang-image-amd64.tar.gz
             openfang-image-arm64.tar.gz
