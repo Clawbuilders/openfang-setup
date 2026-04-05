@@ -1,116 +1,40 @@
-# OpenFang Setup Workshop
+<p align="center">
+  <img src="https://raw.githubusercontent.com/Clawbuilders/openfang/main/public/assets/openfang-logo.png" width="120" alt="OpenFang Logo" />
+</p>
 
-> Step-by-step guide to running **OpenFang** — the open-source Agent OS — powered by **NVIDIA NIM**.
+<h1 align="center">openfang-setup</h1>
 
----
-
-## What You'll Build
-
-A fully running OpenFang instance with:
-- NVIDIA's flagship LLM (`nvidia/llama-3.1-nemotron-ultra-253b-v1`) as the backend
-- A local dashboard at `http://localhost:4200`
-- 7 autonomous AI Hands ready to activate
-- OpenAI-compatible API endpoint
-
-**No Rust. No Python. No Node.js required.** You load a pre-built image — no compilation.
+<p align="center">
+  <strong>This repo has been merged into the main OpenFang repository.</strong><br/>
+  Everything that was here now lives in <a href="https://github.com/Clawbuilders/openfang"><strong>Clawbuilders/openfang</strong></a>.
+</p>
 
 ---
 
-## Prerequisites
+## What moved where
 
-You need **3 things** before starting:
+| Was here | Now in Clawbuilders/openfang |
+|---|---|
+| `workshop/.env.example` | [`workshop/.env.example`](https://github.com/Clawbuilders/openfang/blob/main/workshop/.env.example) |
+| `workshop/openfang.toml` | [`workshop/openfang.toml`](https://github.com/Clawbuilders/openfang/blob/main/workshop/openfang.toml) |
+| `Dockerfile.prebuilt` | [`Dockerfile.prebuilt`](https://github.com/Clawbuilders/openfang/blob/main/Dockerfile.prebuilt) |
+| `.github/workflows/build-image.yml` | [`.github/workflows/build-image.yml`](https://github.com/Clawbuilders/openfang/blob/main/.github/workflows/build-image.yml) |
 
-### 1. Git
-Download: https://git-scm.com/downloads
+Pre-built images are still published to the same place:
 
-Verify:
-```bash
-git --version
-```
-
-### 2. Docker
-
-**Option A — Docker Desktop (recommended, includes GUI)**
-Download: https://www.docker.com/products/docker-desktop/
-
-**Option B — Docker Engine (Linux only)**
-```bash
-# Ubuntu/Debian
-curl -fsSL https://get.docker.com | sh
-sudo usermod -aG docker $USER
-newgrp docker
-```
-
-Verify:
-```bash
-docker --version
-```
-
-### 3. NVIDIA API Key (free)
-
-1. Go to https://build.nvidia.com
-2. Sign in or create a free account
-3. Click **"Get API Key"** in the top right
-4. Copy your key — it starts with `nvapi-`
-
-> The free tier includes generous rate limits across all NIM models.
-
----
-
-## Setup
-
-### Step 1 — Clone This Repo
-
-Everything is pre-configured — config file, `.env` template, and all agent files.
-
-```bash
-git clone https://github.com/Clawbuilders/openfang-setup.git
-cd openfang-setup
-```
-
----
-
-### Step 2 — Download the Pre-Built Image
-
-**Option A — Pull from GHCR (fastest):**
 ```bash
 docker pull ghcr.io/clawbuilders/openfang:latest
 ```
 
-**Option B — Load from file:**
-
-Download: **[openfang-image.tar.gz](https://github.com/Clawbuilders/openfang-setup/releases/latest)**
-
-```bash
-docker load < openfang-image.tar.gz
-```
-
-Verify:
-```bash
-docker images | grep openfang
-```
-
 ---
 
-### Step 3 — Add Your NVIDIA API Key
+## Quick Start
 
 ```bash
+git clone https://github.com/Clawbuilders/openfang.git
+cd openfang
 cp workshop/.env.example workshop/.env
-```
-
-Open `workshop/.env` and replace `nvapi-your-key-here` with your actual key:
-
-```
-NVIDIA_API_KEY=nvapi-your-actual-key-here
-```
-
-> Get your free key at https://build.nvidia.com → click **"Get API Key"**
-
----
-
-### Step 4 — Run OpenFang
-
-```bash
+# Edit workshop/.env — add your NVIDIA_API_KEY from https://build.nvidia.com
 docker run -d \
   --name openfang \
   -p 4200:4200 \
@@ -119,138 +43,16 @@ docker run -d \
   ghcr.io/clawbuilders/openfang:latest
 ```
 
----
-
-### Step 5 — Verify It's Running
-
-```bash
-curl http://127.0.0.1:4200/api/health
-```
-
-You should see a JSON response with `"status": "ok"`.
-
-Open the dashboard in your browser:
-
-```
-http://localhost:4200
-```
+Open **http://localhost:4200**
 
 ---
 
-## Quick Test — Chat with an Agent
+## Deploy to Oracle Cloud (Free Tier — 24/7)
 
-```bash
-curl -X POST http://localhost:4200/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "assistant",
-    "messages": [{"role": "user", "content": "Hello! What can you do?"}]
-  }'
-```
+[![Deploy to Oracle Cloud](https://oci-resourcemanager-plugin.plugins.oci.oraclecloud.com/latest/deploy-to-oracle-cloud.svg)](https://cloud.oracle.com/resourcemanager/stacks/create?zipUrl=https://github.com/Clawbuilders/openfang/releases/latest/download/oci-stack.zip)
+
+Runs on Oracle's Always-Free Ampere A1 (ARM64). Access via Tailscale — no public port exposure.
 
 ---
 
-## Activate an Autonomous Hand
-
-Hands are pre-built agents that run autonomously on schedules — no prompting required.
-
-```bash
-# See all available Hands
-docker exec openfang openfang hand list
-
-# Activate the Researcher Hand
-docker exec openfang openfang hand activate researcher
-
-# Check its progress
-docker exec openfang openfang hand status researcher
-```
-
----
-
-## Available NVIDIA NIM Models
-
-Swap the `model` field in `openfang.toml` and restart the container to change models:
-
-| Model | Best For |
-|-------|----------|
-| `nvidia/llama-3.1-nemotron-ultra-253b-v1` | Flagship reasoning (default) |
-| `nvidia/llama-3.3-nemotron-super-49b-v1` | Fast + strong reasoning |
-| `meta/llama-3.3-70b-instruct` | Fast, general-purpose |
-| `meta/llama-4-maverick-17b-128e-instruct` | Multimodal, 128k context |
-| `meta/llama-4-scout-17b-16e-instruct` | Efficient MoE |
-| `deepseek-ai/deepseek-r1` | Deep reasoning |
-| `mistralai/mistral-large-2-instruct` | Mistral via NIM |
-| `qwen/qwq-32b` | Qwen reasoning model |
-
-Browse all models: https://build.nvidia.com/models
-
----
-
-## Managing the Container
-
-```bash
-# Stop
-docker stop openfang
-
-# Start again
-docker start openfang
-
-# View logs
-docker logs openfang
-
-# Follow live logs
-docker logs -f openfang
-
-# Remove container (keeps the image)
-docker rm openfang
-```
-
----
-
-## Troubleshooting
-
-### `Unable to find image` error
-Pull the image first:
-```bash
-docker pull ghcr.io/clawbuilders/openfang:latest
-```
-
-### `curl: (7) Failed to connect to 127.0.0.1 port 4200`
-The container may still be starting. Wait 5 seconds and retry. Check logs:
-```bash
-docker logs openfang
-```
-
-### Port 4200 already in use
-```bash
-# Find what's using it
-lsof -i :4200
-
-# Or run on a different port
-docker run -d --name openfang -p 4201:4200 ...
-# Then access at http://localhost:4201
-```
-
-### NVIDIA API errors (401 Unauthorized)
-- Verify your key starts with `nvapi-`
-- Check `.env` has no quotes or spaces: `NVIDIA_API_KEY=nvapi-xxx`
-- Confirm the key is active at https://build.nvidia.com
-
-### Container exits immediately
-```bash
-docker logs openfang
-```
-Most common cause: missing or malformed `openfang.toml`. Confirm the file exists in your current directory when running the container.
-
-### Docker Desktop out of memory (Mac/Windows)
-Open Docker Desktop → Settings → Resources → increase Memory to at least 4 GB.
-
----
-
-## Links
-
-- OpenFang GitHub: https://github.com/RightNow-AI/openfang
-- OpenFang Docs: https://openfang.sh/docs
-- NVIDIA NIM Models: https://build.nvidia.com/models
-- Docker Desktop: https://www.docker.com/products/docker-desktop/
-- Discord: https://discord.gg/sSJqgNnq6X
+➡️ **[Go to Clawbuilders/openfang](https://github.com/Clawbuilders/openfang)**
