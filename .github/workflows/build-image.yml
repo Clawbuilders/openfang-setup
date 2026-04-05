@@ -1,15 +1,23 @@
 name: Build & Push OpenFang Image
 
+# Builds native binaries from RightNow-AI/openfang (public upstream) on real
+# amd64 + arm64 runners, packages into debian:bookworm-slim, pushes multi-arch
+# manifest to ghcr.io/clawbuilders/openfang, attaches tar.gz + oci-stack.zip
+# to a GitHub Release.
+#
+# Trigger: Actions → "Build & Push OpenFang Image" → Run workflow
+
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Version tag (e.g. v0.3.30)"
+        description: "Version tag (e.g. v0.5.5)"
         required: false
         default: "latest"
 
 jobs:
   build:
+    name: Build / ${{ matrix.arch }}
     strategy:
       matrix:
         include:
@@ -19,19 +27,20 @@ jobs:
           - runner: ubuntu-24.04-arm
             platform: linux/arm64
             arch: arm64
+
     runs-on: ${{ matrix.runner }}
     permissions:
       contents: write
       packages: write
 
     steps:
-      - name: Checkout openfang-setup repo
+      - name: Checkout openfang-setup repo (for Dockerfile.prebuilt)
         uses: actions/checkout@v4
 
-      - name: Checkout OpenFang source
+      - name: Checkout OpenFang source (public upstream)
         uses: actions/checkout@v4
         with:
-          repository: Clawbuilders/openfang
+          repository: RightNow-AI/openfang
           path: openfang-src
 
       - name: Set version tag
@@ -47,7 +56,6 @@ jobs:
             /usr/local/lib/android \
             /opt/ghc \
             /opt/hostedtoolcache/CodeQL \
-            /usr/local/share/boost \
             "$AGENT_TOOLSDIRECTORY" || true
           sudo docker image prune -af
           df -h
@@ -75,9 +83,9 @@ jobs:
             ${{ runner.os }}-${{ matrix.arch }}-cargo-
 
       - name: Install system dependencies
-        run: sudo apt-get install -y pkg-config libssl-dev
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
 
-      - name: Build OpenFang binary natively
+      - name: Build OpenFang binary (native — no QEMU)
         working-directory: openfang-src
         env:
           CARGO_PROFILE_RELEASE_LTO: "false"
@@ -87,7 +95,7 @@ jobs:
       - name: Log in to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
-      - name: Package and push platform image
+      - name: Build and push platform image
         run: |
           cp openfang-src/target/release/openfang .
           cp -r openfang-src/agents .
@@ -97,34 +105,34 @@ jobs:
             .
           docker push ghcr.io/clawbuilders/openfang:${{ steps.version.outputs.tag }}-${{ matrix.arch }}
 
-      - name: Export platform image as tar.gz
+      - name: Export image as tar.gz
         run: |
           docker save ghcr.io/clawbuilders/openfang:${{ steps.version.outputs.tag }}-${{ matrix.arch }} \
             | gzip > openfang-image-${{ matrix.arch }}.tar.gz
           echo "Image size: $(du -sh openfang-image-${{ matrix.arch }}.tar.gz | cut -f1)"
 
-      - name: Upload platform image artifact
+      - name: Upload image artifact
         uses: actions/upload-artifact@v4
         with:
           name: openfang-image-${{ matrix.arch }}
           path: openfang-image-${{ matrix.arch }}.tar.gz
           retention-days: 1
 
-      - name: Get OpenFang version info
-        id: openfang_info
+      - name: Get version info
+        id: info
+        working-directory: openfang-src
         run: |
-          cd openfang-src
           VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
           echo "openfang_version=$VERSION" >> $GITHUB_OUTPUT
-          COMMIT=$(git rev-parse --short HEAD)
-          echo "commit=$COMMIT" >> $GITHUB_OUTPUT
+          echo "commit=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
 
     outputs:
-      openfang_version: ${{ steps.openfang_info.outputs.openfang_version }}
-      openfang_commit: ${{ steps.openfang_info.outputs.commit }}
-      version_tag: ${{ steps.version.outputs.tag }}
+      openfang_version: ${{ steps.info.outputs.openfang_version }}
+      openfang_commit:  ${{ steps.info.outputs.commit }}
+      version_tag:      ${{ steps.version.outputs.tag }}
 
   manifest:
+    name: Multi-arch Manifest + Release
     needs: build
     runs-on: ubuntu-latest
     permissions:
@@ -132,6 +140,9 @@ jobs:
       packages: write
 
     steps:
+      - name: Checkout (for deploy/terraform assets)
+        uses: actions/checkout@v4
+
       - name: Log in to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
@@ -144,7 +155,13 @@ jobs:
             ghcr.io/clawbuilders/openfang:${TAG}-amd64 \
             ghcr.io/clawbuilders/openfang:${TAG}-arm64
 
-      - name: Download platform image artifacts
+      - name: Package OCI Resource Manager stack
+        run: |
+          cd deploy
+          zip -r ../oci-stack.zip .
+          echo "Stack size: $(du -sh ../oci-stack.zip | cut -f1)"
+
+      - name: Download image artifacts
         uses: actions/download-artifact@v4
         with:
           pattern: openfang-image-*
@@ -156,35 +173,38 @@ jobs:
           tag_name: ${{ needs.build.outputs.version_tag }}
           name: "OpenFang ${{ needs.build.outputs.version_tag }}"
           body: |
-            ## OpenFang Workshop Image — ${{ needs.build.outputs.version_tag }}
+            ## OpenFang ${{ needs.build.outputs.version_tag }}
 
-            Pre-built Docker image for the OpenFang setup workshop.
+            Pre-built multi-arch Docker image — no Rust install, no compilation.
 
             ### What's included
             - OpenFang v${{ needs.build.outputs.openfang_version }} (commit `${{ needs.build.outputs.openfang_commit }}`)
             - Configured for NVIDIA NIM (`nvidia/llama-3.1-nemotron-ultra-253b-v1`)
             - Dashboard at `http://localhost:4200`
-            - 7 autonomous Hands included
-            - **Multi-arch**: `linux/amd64` + `linux/arm64` (Apple Silicon)
+            - Multi-arch: `linux/amd64` + `linux/arm64` (Apple Silicon, Oracle Ampere A1)
 
             ### Quick Start
 
-            **Option A — Pull from GHCR (recommended, auto-selects your arch):**
+            **Option A — Pull from GHCR:**
             ```bash
             docker pull ghcr.io/clawbuilders/openfang:latest
             ```
 
-            **Option B — Load from file (pick your arch):**
+            **Option B — Load from file:**
             ```bash
-            # Apple Silicon (M1/M2/M3/M4):
+            # Apple Silicon / Oracle Ampere A1 (ARM64):
             docker load < openfang-image-arm64.tar.gz
 
-            # Intel/AMD:
+            # Intel / AMD (x86_64):
             docker load < openfang-image-amd64.tar.gz
             ```
 
-            **Run it:**
+            **Run:**
             ```bash
+            git clone https://github.com/Clawbuilders/openfang-setup.git
+            cd openfang-setup
+            cp workshop/.env.example workshop/.env
+            # Edit workshop/.env — add your NVIDIA_API_KEY
             docker run -d \
               --name openfang \
               -p 4200:4200 \
@@ -193,18 +213,14 @@ jobs:
               ghcr.io/clawbuilders/openfang:latest
             ```
 
-            ### Requirements
-            - Docker Desktop or Docker Engine
-            - NVIDIA API key from https://build.nvidia.com
-
-            ### Full setup guide
-            See [README](https://github.com/Clawbuilders/openfang-setup#readme)
+            ### Deploy to Oracle Cloud (Free Tier — 24/7)
+            [![Deploy to Oracle Cloud](https://oci-resourcemanager-plugin.plugins.oci.oraclecloud.com/latest/deploy-to-oracle-cloud.svg)](https://cloud.oracle.com/resourcemanager/stacks/create?zipUrl=https://github.com/Clawbuilders/openfang-setup/releases/latest/download/oci-stack.zip)
 
             ---
-            Built natively on GitHub Actions (ubuntu-latest + ubuntu-24.04-arm), packaged into debian:bookworm-slim.
-            Source: https://github.com/Clawbuilders/openfang
+            Built from [RightNow-AI/openfang](https://github.com/RightNow-AI/openfang) on GitHub Actions (ubuntu-latest + ubuntu-24.04-arm).
           files: |
             openfang-image-amd64.tar.gz
             openfang-image-arm64.tar.gz
+            oci-stack.zip
           draft: false
           prerelease: false

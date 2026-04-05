@@ -1,0 +1,119 @@
+title: OpenFang — Agent OS on Oracle Cloud Free Tier
+description: Deploy OpenFang (Rust Agent OS) on an Always-Free Ampere A1 instance with Tailscale private networking. Port 4200 is accessible only via your Tailscale network — no public exposure.
+schemaVersion: 1.1.0
+version: "20240101"
+locale: en
+
+#
+# The ORM UI renders these variables as a wizard.
+# Sensitive fields are masked and never stored in Terraform state as plain text.
+#
+
+variableGroups:
+  - title: "Required"
+    variables:
+      - compartment_ocid
+      - ssh_public_key
+      - tailscale_auth_key
+
+  - title: "LLM Provider"
+    variables:
+      - llm_provider
+      - llm_api_key
+
+  - title: "API Security"
+    variables:
+      - openfang_api_key
+
+  - title: "Instance Size (Always Free)"
+    variables:
+      - instance_ocpus
+      - instance_memory_in_gbs
+
+variables:
+  compartment_ocid:
+    type: oci:identity:compartment:id
+    title: Compartment
+    description: OCI compartment where resources will be created.
+    required: true
+
+  ssh_public_key:
+    type: oci:core:ssh:publickey
+    title: SSH Public Key
+    description: Your SSH public key for instance access (paste the full contents of ~/.ssh/id_rsa.pub or similar).
+    required: true
+
+  tailscale_auth_key:
+    type: password
+    title: Tailscale Auth Key
+    description: "Generate at https://login.tailscale.com/admin/settings/keys — use a reusable, ephemeral key tagged with tag:server."
+    required: true
+    sensitive: true
+
+  llm_provider:
+    type: enum
+    title: LLM Provider
+    description: Default LLM provider for all agents.
+    required: true
+    default: nvidia
+    enum:
+      - nvidia
+      - groq
+      - openai
+      - anthropic
+    enumDescriptions:
+      - "NVIDIA NIM (build.nvidia.com) — Free tier with generous limits"
+      - "Groq — Fast inference, free tier available"
+      - "OpenAI — GPT-4o-mini default"
+      - "Anthropic — Claude Haiku default"
+
+  llm_api_key:
+    type: password
+    title: LLM API Key
+    description: "API key for the selected provider. NVIDIA: nvapi-... · Groq: gsk_... · OpenAI: sk-... · Anthropic: sk-ant-..."
+    required: false
+    sensitive: true
+
+  openfang_api_key:
+    type: password
+    title: OpenFang API Key (recommended)
+    description: "Bearer token to protect the OpenFang HTTP API. Leave empty to disable auth (Tailscale still gates access)."
+    required: false
+    sensitive: true
+
+  instance_ocpus:
+    type: integer
+    title: OCPUs
+    description: "Always Free tier: up to 4 total A1 OCPUs across all instances."
+    minimum: 1
+    maximum: 4
+    default: 2
+    required: true
+
+  instance_memory_in_gbs:
+    type: integer
+    title: RAM (GB)
+    description: "Always Free tier: up to 24 GB total A1 memory."
+    minimum: 6
+    maximum: 24
+    default: 12
+    required: true
+
+outputs:
+  instance_public_ip:
+    title: Instance Public IP
+    displayText: Public IP (for SSH)
+    type: string
+    visible: true
+
+  ssh_command:
+    title: SSH Command
+    displayText: Connect via SSH
+    type: string
+    visible: true
+
+  dashboard_url:
+    title: Dashboard URL
+    displayText: OpenFang Dashboard (Tailscale)
+    type: string
+    visible: true
